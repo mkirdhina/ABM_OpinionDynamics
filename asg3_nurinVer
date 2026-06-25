@@ -1,0 +1,512 @@
+clc;
+clear;
+close all;
+
+% ============================================================
+% ABM OPINION DYNAMICS IN A SOCIAL NETWORK
+% Topic: Public opinion on AI-powered learning assistants
+% ============================================================
+
+% ============================================================
+% 1. SIMPLE GUI / INTERACTIVE INPUT
+% ============================================================
+
+defaultCitizens = 100;
+defaultInfluencers = 6;
+defaultExperts = 3;
+defaultTimeSteps = 80;
+defaultSeed = 42;
+
+try
+    prompt = {
+        'Number of Citizens (50 - 200):', ...
+        'Number of Influencers (3 - 10):', ...
+        'Number of Education Experts (1 - 5):', ...
+        'Time Steps (50 - 100):', ...
+        'Random:'
+    };
+
+    dlgTitle = 'ABM Opinion Dynamics Setup';
+    dims = [1 50];
+
+    defaultAns = {
+        num2str(defaultCitizens), ...
+        num2str(defaultInfluencers), ...
+        num2str(defaultExperts), ...
+        num2str(defaultTimeSteps), ...
+        num2str(defaultSeed)
+    };
+
+    answer = inputdlg(prompt, dlgTitle, dims, defaultAns);
+
+    if isempty(answer)
+        numCitizens = defaultCitizens;
+        numInfluencers = defaultInfluencers;
+        numExperts = defaultExperts;
+        timeSteps = defaultTimeSteps;
+        seedValue = defaultSeed;
+    else
+        numCitizens = str2double(answer{1});
+        numInfluencers = str2double(answer{2});
+        numExperts = str2double(answer{3});
+        timeSteps = str2double(answer{4});
+        seedValue = str2double(answer{5});
+    end
+
+catch
+    disp('GUI dialog not available. Using Command Window input.');
+
+    temp = input('Number of Citizens (50 - 200), default 100: ');
+    if isempty(temp)
+        numCitizens = defaultCitizens;
+    else
+        numCitizens = temp;
+    end
+
+    temp = input('Number of Influencers (3 - 10), default 6: ');
+    if isempty(temp)
+        numInfluencers = defaultInfluencers;
+    else
+        numInfluencers = temp;
+    end
+
+    temp = input('Number of Education Experts (1 - 5), default 3: ');
+    if isempty(temp)
+        numExperts = defaultExperts;
+    else
+        numExperts = temp;
+    end
+
+    temp = input('Time Steps (50 - 100), default 80: ');
+    if isempty(temp)
+        timeSteps = defaultTimeSteps;
+    else
+        timeSteps = temp;
+    end
+
+    temp = input('Random, default 42: ');
+    if isempty(temp)
+        seedValue = defaultSeed;
+    else
+        seedValue = temp;
+    end
+end
+
+% Make sure input follows assignment range
+numCitizens = max(50, min(200, round(numCitizens)));
+numInfluencers = max(3, min(10, round(numInfluencers)));
+numExperts = max(1, min(5, round(numExperts)));
+timeSteps = max(50, min(100, round(timeSteps)));
+
+% Random seed for stable results
+try
+    rng(seedValue);
+catch
+    rand('seed', seedValue);
+    randn('seed', seedValue);
+end
+
+% ============================================================
+% 2. SCENARIO MENU
+% ============================================================
+
+scenarioNames = {
+    'Baseline Model', ...
+    'Strong Influencer Impact', ...
+    'Strong Expert Intervention', ...
+    'Low Trust Environment'
+};
+
+try
+    selectedOption = menu('Choose Simulation Scenario', ...
+        'Scenario 1: Baseline Model', ...
+        'Scenario 2: Strong Influencer Impact', ...
+        'Scenario 3: Strong Expert Intervention', ...
+        'Scenario 4: Low Trust Environment', ...
+        'Run All 4 Scenarios');
+catch
+    disp(' ');
+    disp('Choose Simulation Scenario:');
+    disp('1. Scenario 1: Baseline Model');
+    disp('2. Scenario 2: Strong Influencer Impact');
+    disp('3. Scenario 3: Strong Expert Intervention');
+    disp('4. Scenario 4: Low Trust Environment');
+    disp('5. Run All 4 Scenarios');
+
+    selectedOption = input('Enter choice, default 5: ');
+    if isempty(selectedOption)
+        selectedOption = 5;
+    end
+end
+
+if selectedOption < 1 || selectedOption > 5
+    selectedOption = 5;
+end
+
+if selectedOption == 5
+    scenariosToRun = 1:4;
+else
+    scenariosToRun = selectedOption;
+end
+
+numScenarios = length(scenariosToRun);
+
+% ============================================================
+% 3. BASE MODEL SETUP
+% ============================================================
+
+% Citizen opinion:
+% -1 = strongly against AI
+%  0 = neutral
+% +1 = strongly support AI
+baseCitizenOpinion = -1 + 2 * rand(numCitizens, 1);
+
+% Influencers have stronger/extreme opinions
+baseInfluencerOpinion = zeros(numInfluencers, 1);
+
+for k = 1:numInfluencers
+    if k <= ceil(numInfluencers / 2)
+        baseInfluencerOpinion(k) = -(0.6 + 0.4 * rand);
+    else
+        baseInfluencerOpinion(k) = 0.6 + 0.4 * rand;
+    end
+end
+
+% Shuffle influencer opinions
+shuffleIndex = randperm(numInfluencers);
+baseInfluencerOpinion = baseInfluencerOpinion(shuffleIndex);
+
+% Education experts have balanced or mildly supportive opinions
+baseExpertOpinion = 0.05 + 0.30 * rand(numExperts, 1);
+
+% Random social network among citizens
+connectionProb = 0.15;
+baseNetwork = rand(numCitizens, numCitizens) < connectionProb;
+
+% Remove self-connection
+for i = 1:numCitizens
+    baseNetwork(i, i) = 0;
+end
+
+% Ensure every citizen has at least one neighbour
+for i = 1:numCitizens
+    if sum(baseNetwork(i, :)) == 0
+        randomNeighbour = randi(numCitizens);
+
+        while randomNeighbour == i
+            randomNeighbour = randi(numCitizens);
+        end
+
+        baseNetwork(i, randomNeighbour) = 1;
+    end
+end
+
+% Trust between citizens
+baseTrustCitizen = rand(numCitizens, numCitizens);
+
+% Trust in education experts
+baseTrustExpert = 0.7 + 0.3 * rand(numCitizens, 1);
+
+% Trust in influencers
+baseTrustInfluencer = 0.4 + 0.4 * rand(numCitizens, 1);
+
+% Each citizen follows one main influencer
+baseFollowedInfluencer = randi(numInfluencers, numCitizens, 1);
+
+% ============================================================
+% 4. STORAGE FOR RESULTS
+% ============================================================
+
+avgOpinionAll = zeros(4, timeSteps);
+varianceAll = zeros(4, timeSteps);
+finalOpinionsAll = zeros(4, numCitizens);
+opinionHistoryAll = zeros(4, numCitizens, timeSteps);
+
+supportPercentAll = zeros(4, 1);
+neutralPercentAll = zeros(4, 1);
+againstPercentAll = zeros(4, 1);
+interpretationAll = cell(4, 1);
+
+% ============================================================
+% 5. SIMULATION LOOP
+% ============================================================
+
+for scenarioIndex = 1:numScenarios
+
+    scenario = scenariosToRun(scenarioIndex);
+
+    % Use the same initial values for fair comparison
+    citizenOpinion = baseCitizenOpinion;
+    influencerOpinion = baseInfluencerOpinion;
+    expertOpinion = baseExpertOpinion;
+    network = baseNetwork;
+    trustCitizen = baseTrustCitizen;
+    trustExpert = baseTrustExpert;
+    trustInfluencer = baseTrustInfluencer;
+    followedInfluencer = baseFollowedInfluencer;
+
+    % Default parameters
+    alpha = 0.16;   % direct citizen-to-citizen influence
+    beta  = 0.22;   % neighbour averaging effect
+    gamma = 0.18;   % education expert effect
+    delta = 0.18;   % influencer effect
+    sigma = 0.02;   % random noise / misinformation
+
+    % Scenario settings
+    if scenario == 1
+
+        % Scenario 1: Baseline Model
+        alpha = 0.16;
+        beta  = 0.22;
+        gamma = 0.18;
+        delta = 0.18;
+        sigma = 0.02;
+
+    elseif scenario == 2
+
+        % Scenario 2: Strong Influencer Impact
+        alpha = 0.16;
+        beta  = 0.20;
+        gamma = 0.12;
+        delta = 0.60;
+        sigma = 0.04;
+
+    elseif scenario == 3
+
+        % Scenario 3: Strong Expert Intervention
+        alpha = 0.16;
+        beta  = 0.22;
+        gamma = 0.70;
+        delta = 0.12;
+        sigma = 0.01;
+
+        trustExpert = 0.90 + 0.10 * rand(numCitizens, 1);
+
+    elseif scenario == 4
+
+        % Scenario 4: Low Trust Environment
+        alpha = 0.10;
+        beta  = 0.10;
+        gamma = 0.10;
+        delta = 0.12;
+        sigma = 0.05;
+
+        trustCitizen = 0.20 * trustCitizen;
+        trustExpert = 0.25 * trustExpert;
+        trustInfluencer = 0.25 * trustInfluencer;
+
+    end
+
+    opinionHistory = zeros(numCitizens, timeSteps);
+
+    for t = 1:timeSteps
+
+        newOpinion = citizenOpinion;
+
+        for i = 1:numCitizens
+
+            neighbours = find(network(i, :) == 1);
+
+            % ------------------------------------------------
+            % 1. Direct influence from one connected citizen
+            % ------------------------------------------------
+            if length(neighbours) > 0
+
+                selectedNeighbour = neighbours(randi(length(neighbours)));
+
+                directEffect = alpha * trustCitizen(i, selectedNeighbour) * ...
+                    (citizenOpinion(selectedNeighbour) - citizenOpinion(i));
+
+                % ------------------------------------------------
+                % 2. Averaging effect from neighbour opinions
+                % ------------------------------------------------
+                neighbourAverage = mean(citizenOpinion(neighbours));
+                averageTrust = mean(trustCitizen(i, neighbours));
+
+                averagingEffect = beta * averageTrust * ...
+                    (neighbourAverage - citizenOpinion(i));
+
+            else
+                directEffect = 0;
+                averagingEffect = 0;
+            end
+
+            % ------------------------------------------------
+            % 3. Education expert effect
+            % ------------------------------------------------
+            avgExpertOpinion = mean(expertOpinion);
+
+            expertEffect = gamma * trustExpert(i) * ...
+                (avgExpertOpinion - citizenOpinion(i));
+
+            % ------------------------------------------------
+            % 4. Influencer effect
+            % ------------------------------------------------
+            selectedInfluencer = followedInfluencer(i);
+
+            influencerEffect = delta * trustInfluencer(i) * ...
+                (influencerOpinion(selectedInfluencer) - citizenOpinion(i));
+
+            % ------------------------------------------------
+            % 5. Random noise / misinformation
+            % ------------------------------------------------
+            randomNoise = sigma * randn;
+
+            % ------------------------------------------------
+            % Final opinion update equation
+            % ------------------------------------------------
+            newOpinion(i) = citizenOpinion(i) ...
+                + directEffect ...
+                + averagingEffect ...
+                + expertEffect ...
+                + influencerEffect ...
+                + randomNoise;
+
+            % Keep opinion inside [-1, +1]
+            newOpinion(i) = max(-1, min(1, newOpinion(i)));
+
+        end
+
+        citizenOpinion = newOpinion;
+
+        opinionHistory(:, t) = citizenOpinion;
+        avgOpinionAll(scenario, t) = mean(citizenOpinion);
+        varianceAll(scenario, t) = var(citizenOpinion);
+
+    end
+
+    finalOpinionsAll(scenario, :) = citizenOpinion';
+    opinionHistoryAll(scenario, :, :) = opinionHistory;
+
+    % Final classification
+    finalOpinions = finalOpinionsAll(scenario, :);
+
+    supportPercent = sum(finalOpinions > 0.3) / numCitizens * 100;
+    againstPercent = sum(finalOpinions < -0.3) / numCitizens * 100;
+    neutralPercent = sum(finalOpinions >= -0.3 & finalOpinions <= 0.3) / numCitizens * 100;
+
+    supportPercentAll(scenario) = supportPercent;
+    neutralPercentAll(scenario) = neutralPercent;
+    againstPercentAll(scenario) = againstPercent;
+
+    avgFinal = mean(finalOpinions);
+    varFinal = var(finalOpinions);
+
+    if supportPercent > 70 && varFinal < 0.15
+        interpretation = 'Consensus Support';
+    elseif againstPercent > 70 && varFinal < 0.15
+        interpretation = 'Consensus Against';
+    elseif varFinal >= 0.22 && supportPercent > 20 && againstPercent > 20
+        interpretation = 'Polarization';
+    elseif neutralPercent > 60 && varFinal < 0.10
+        interpretation = 'Moderate Consensus';
+    else
+        interpretation = 'Mixed / Fragmented';
+    end
+
+    interpretationAll{scenario} = interpretation;
+
+end
+
+% ============================================================
+% 6. FINAL RESULT TABLE
+% ============================================================
+
+fprintf('\nFINAL SIMULATION RESULTS\n');
+fprintf('--------------------------------------------------------------------------------------------------------------\n');
+fprintf('%-30s %-12s %-12s %-12s %-12s %-12s %-22s\n', ...
+    'Scenario', 'Avg', 'Variance', 'Support %', 'Neutral %', 'Against %', 'Interpretation');
+fprintf('--------------------------------------------------------------------------------------------------------------\n');
+
+for scenarioIndex = 1:numScenarios
+
+    scenario = scenariosToRun(scenarioIndex);
+    finalOpinions = finalOpinionsAll(scenario, :);
+
+    avgFinal = mean(finalOpinions);
+    varFinal = var(finalOpinions);
+
+    fprintf('%-30s %-12.4f %-12.4f %-12.2f %-12.2f %-12.2f %-22s\n', ...
+        scenarioNames{scenario}, ...
+        avgFinal, ...
+        varFinal, ...
+        supportPercentAll(scenario), ...
+        neutralPercentAll(scenario), ...
+        againstPercentAll(scenario), ...
+        interpretationAll{scenario});
+
+end
+
+fprintf('--------------------------------------------------------------------------------------------------------------\n');
+
+%Figure Result%
+
+% ============================================================
+% DISPLAY FIGURES
+% ============================================================
+
+for scenarioIndex = 1:numScenarios
+
+    scenario = scenariosToRun(scenarioIndex);
+
+    history = squeeze(opinionHistoryAll(scenario,:,:));
+
+    showResults(history, scenarioNames{scenario});
+
+end
+
+function showResults(history,titleName)
+
+figure('Name',titleName);
+
+
+%% Graph 1 : Average Opinion
+
+subplot(2,2,1);
+
+avgOpinion = mean(history,1);
+
+plot(avgOpinion,'LineWidth',2);
+
+grid on;
+
+title('Average Opinion');
+
+xlabel('Time Step');
+
+ylabel('Opinion');
+
+
+%% Graph 2 : Histogram
+
+subplot(2,2,2);
+
+hist(history(:,end),15);
+
+title('Final Opinion Distribution');
+
+xlabel('Opinion');
+
+ylabel('Frequency');
+
+
+%% Graph 3 : 3D Surface
+
+subplot(2,2,[3 4]);
+
+surf(history');
+
+shading interp;
+
+title('3D Opinion Evolution');
+
+xlabel('Time Step');
+
+ylabel('Agent');
+
+zlabel('Opinion');
+
+end
+
+
+
